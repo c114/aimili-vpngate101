@@ -1,0 +1,19 @@
+services:
+  privategate:
+    build: .
+    container_name: privategate
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8787:8787"
+      # Safer default: proxy is only exposed on localhost of the VPS/host.
+      - "127.0.0.1:7928:7928"
+    volumes:
+      - ./vpngate_data:/data
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
