@@ -264,6 +264,182 @@ def subscription_urls(headers: Any) -> dict[str, str]:
         "token": str(token),
     }
 
+
+DEFAULT_ENV_FILE = Path("/etc/default/aimilivpn")
+DONATION_USDT_TRC20 = "TF2kHq7KfiNuifkEv1aGcuD3EC2RhFU9Sk"
+
+
+def _safe_env_value(value: str) -> str:
+    """Quote a value safely for /etc/default style EnvironmentFile."""
+    return "'" + str(value).replace("'", "'\\''") + "'"
+
+
+def proxy_bind_host_for_local_use() -> str:
+    host = LOCAL_PROXY_HOST or "127.0.0.1"
+    if host in ("0.0.0.0", "::", ""):
+        return "127.0.0.1"
+    if host == "localhost":
+        return "127.0.0.1"
+    return host
+
+
+def proxy_display_host() -> str:
+    host = proxy_bind_host_for_local_use()
+    return f"[{host}]" if ":" in host and not host.startswith("[") else host
+
+
+def url_auth_quote(value: str) -> str:
+    return urllib.parse.quote(str(value or ""), safe="")
+
+
+def build_proxy_uri(scheme: str, user: str | None, password: str | None, host: str, port: int) -> str:
+    host_part = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    if user is not None and password is not None:
+        return f"{scheme}://{url_auth_quote(user)}:{url_auth_quote(password)}@{host_part}:{port}"
+    return f"{scheme}://{host_part}:{port}"
+
+
+def build_xray_proxy_outbound(protocol: str = "http") -> dict[str, Any]:
+    user, password = proxy_server.get_proxy_credentials()
+    server: dict[str, Any] = {
+        "address": proxy_bind_host_for_local_use(),
+        "port": int(LOCAL_PROXY_PORT),
+    }
+    if user is not None and password is not None:
+        server["users"] = [{"user": user, "pass": password}]
+    return {
+        "tag": "aimilivpn-out",
+        "protocol": protocol,
+        "settings": {"servers": [server]},
+    }
+
+
+def build_xray_route_rule(inbound_tag: str = "in-你的端口-tcp") -> dict[str, Any]:
+    return {
+        "type": "field",
+        "inboundTag": [inbound_tag],
+        "outboundTag": "aimilivpn-out",
+    }
+
+
+def build_interop_info() -> dict[str, Any]:
+    user, password = proxy_server.get_proxy_credentials()
+    host = proxy_bind_host_for_local_use()
+    port = int(LOCAL_PROXY_PORT)
+    auth_enabled = user is not None and password is not None
+    return {
+        "proxy": {
+            "host": host,
+            "bind_host": LOCAL_PROXY_HOST,
+            "port": port,
+            "username": user or "",
+            "password": password or "",
+            "auth_enabled": auth_enabled,
+            "allowed_ips": os.environ.get("LOCAL_PROXY_ALLOWED_IPS") or os.environ.get("LOCAL_PROXY_WHITELIST") or "127.0.0.1/32,::1/128",
+            "http_uri": build_proxy_uri("http", user, password, host, port),
+            "socks5_uri": build_proxy_uri("socks5", user, password, host, port),
+        },
+        "xray": {
+            "recommended_outbound_tag": "aimilivpn-out",
+            "http_outbound": build_xray_proxy_outbound("http"),
+            "socks_outbound": build_xray_proxy_outbound("socks"),
+            "routing_rule": build_xray_route_rule(),
+            "quick_steps": [
+                "在 3X-ui 的 Xray 配置中添加出站，推荐协议选择 http。",
+                "出站地址填写 127.0.0.1，端口填写本页显示的本地代理端口。",
+                "如果代理开启认证，请填写本页显示的用户名和密码。",
+                "在路由规则里添加：你的入站 tag -> aimilivpn-out。",
+                "保存配置并重启 Xray 后，再让客户端更新订阅/重新测速。",
+            ],
+        },
+        "donation": {
+            "network": "USDT-TRC20",
+            "address": DONATION_USDT_TRC20,
+        },
+        "security_tips": [
+            "7928 是本机代理端口，默认只给 VPS 本机和 Xray 使用，不建议公网放行。",
+            "3X-ui 分享给客户端的入站端口需要在云服务商安全组放行。",
+            "如果代理密码泄露，请在本页一键重置代理密码，并同步更新 3X-ui 出站配置。",
+        ],
+    }
+
+
+def check_local_listening_port(port: int) -> dict[str, Any]:
+    if port < 1 or port > 65535:
+        raise ValueError("端口范围必须是 1 至 65535")
+    listening = False
+    raw = ""
+    try:
+        res = subprocess.run(["ss", "-lntp"], capture_output=True, text=True, timeout=3)
+        raw = (res.stdout or "") + (res.stderr or "")
+        pattern = re.compile(rf"(?<![0-9]):{port}(?![0-9])")
+        listening = any(pattern.search(line) for line in raw.splitlines())
+    except Exception as exc:
+        raw = f"ss 检测失败: {exc}"
+
+    connect_ok = False
+    connect_error = ""
+    for host in ("127.0.0.1", "::1"):
+        try:
+            af = socket.AF_INET6 if ":" in host else socket.AF_INET
+            s = socket.socket(af, socket.SOCK_STREAM)
+            s.settimeout(0.8)
+            s.connect((host, port))
+            connect_ok = True
+            s.close()
+            break
+        except Exception as exc:
+            connect_error = str(exc)
+            try:
+                s.close()
+            except Exception:
+                pass
+
+    return {
+        "port": port,
+        "listening": bool(listening or connect_ok),
+        "connect_ok": connect_ok,
+        "connect_error": connect_error,
+        "raw_hint": "本机已监听；如果客户端仍然 -1，请检查云服务商安全组是否放行该入站端口。" if (listening or connect_ok) else "本机没有检测到监听；请检查 3X-ui 入站是否启用并重启 Xray。",
+    }
+
+
+def update_env_file_value(path: Path, key: str, value: str) -> None:
+    if "\n" in key or "=" in key:
+        raise ValueError("环境变量键名无效")
+    if "\n" in value or "\r" in value:
+        raise ValueError("环境变量值不能包含换行")
+    lines: list[str] = []
+    if path.exists():
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    found = False
+    new_line = f"{key}={_safe_env_value(value)}"
+    for idx, line in enumerate(lines):
+        if re.match(rf"^\s*{re.escape(key)}\s*=", line):
+            lines[idx] = new_line
+            found = True
+            break
+    if not found:
+        lines.append(new_line)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    try:
+        tmp.chmod(0o600)
+    except OSError:
+        pass
+    tmp.replace(path)
+
+
+def reset_local_proxy_password(new_password: str | None = None) -> str:
+    password = (new_password or generate_random_password()).strip()
+    if len(password) < 10:
+        raise ValueError("新代理密码至少需要 10 位")
+    if not DEFAULT_ENV_FILE.exists():
+        raise RuntimeError(f"未找到 {DEFAULT_ENV_FILE}，无法自动写入代理密码")
+    update_env_file_value(DEFAULT_ENV_FILE, "LOCAL_PROXY_PASS", password)
+    os.environ["LOCAL_PROXY_PASS"] = password
+    return password
+
 import hashlib
 import random
 
@@ -988,6 +1164,7 @@ def row_to_node(row: dict[str, str], config_text: str) -> dict[str, Any]:
     return {
         "id": node_id,
         "country": country_zh,
+        "country_long": country_long,
         "country_short": country_short,
         "host_name": row.get("HostName", ""),
         "ip": ip,
@@ -995,6 +1172,12 @@ def row_to_node(row: dict[str, str], config_text: str) -> dict[str, Any]:
         "ping": parse_int(row.get("Ping")),
         "speed": parse_int(row.get("Speed")),
         "sessions": parse_int(row.get("NumVpnSessions")),
+        "uptime": parse_int(row.get("Uptime")),
+        "total_users": parse_int(row.get("TotalUsers")),
+        "total_traffic": parse_int(row.get("TotalTraffic")),
+        "log_type": row.get("LogType", ""),
+        "operator": row.get("Operator", ""),
+        "message": row.get("Message", ""),
         "owner": "",
         "asn": "",
         "as_name": "",
@@ -3027,6 +3210,91 @@ INDEX_HTML = r"""<!doctype html>
       color: #fb7185;
     }
 
+
+    .node-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .node-summary-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+    }
+    .node-summary-card span {
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-weight: 600;
+    }
+    .node-summary-card strong {
+      font-size: 20px;
+      color: var(--text-primary);
+      line-height: 1.2;
+    }
+    .node-country-cell {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .node-flag {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border-color);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      flex: 0 0 auto;
+    }
+    .node-main-text {
+      color: var(--text-primary);
+      font-weight: 650;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .node-sub-text {
+      color: var(--text-secondary);
+      font-size: 11px;
+      margin-top: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .mini-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.045);
+      border: 1px solid rgba(255,255,255,0.07);
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 600;
+      margin: 2px 3px 2px 0;
+      white-space: nowrap;
+    }
+    .node-detail-line {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px;
+      margin-top: 4px;
+    }
+    .table-container table th, .table-container table td {
+      vertical-align: top;
+    }
+
     @media (max-width: 768px) {
       header {
         flex-direction: column;
@@ -3262,6 +3530,10 @@ INDEX_HTML = r"""<!doctype html>
           <svg xmlns="http://www.w3.org/2000/svg" style="width:14px; height:14px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
           代理设置
         </a>
+        <a href="javascript:void(0)" onclick="openXuiHelperModal()">
+          <svg xmlns="http://www.w3.org/2000/svg" style="width:14px; height:14px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
+          3X-ui 对接
+        </a>
         <a href="javascript:void(0)" onclick="openGatewayModal()">
           <svg xmlns="http://www.w3.org/2000/svg" style="width:14px; height:14px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
           网关设置
@@ -3341,17 +3613,23 @@ INDEX_HTML = r"""<!doctype html>
     </div>
   </div>
 
+  <section id="node_detail_stats" class="node-summary-grid" style="display:none;"></section>
+
   <div class="table-wrapper">
     <div class="table-container">
       <table>
         <thead>
           <tr>
-            <th style="width: 90px;">状态</th>
-            <th style="width: 220px;">IP 地址 : 端口</th>
-            <th>物理位置</th>
-            <th>运营主体 / ISP</th>
-            <th style="width: 110px;">IP 类型</th>
-            <th style="width: 180px;">操作</th>
+            <th style="width: 88px;">状态</th>
+            <th style="width: 170px;">国家 / 地区</th>
+            <th style="width: 210px;">节点地址</th>
+            <th style="width: 140px;">延迟 / Ping</th>
+            <th style="width: 190px;">负载 / 评分</th>
+            <th style="width: 150px;">在线时间</th>
+            <th>运营主体 / 位置</th>
+            <th style="width: 150px;">协议 / 类型</th>
+            <th style="width: 150px;">检测信息</th>
+            <th style="width: 210px;">操作</th>
           </tr>
         </thead>
         <tbody id="rows"></tbody>
@@ -3529,7 +3807,93 @@ INDEX_HTML = r"""<!doctype html>
 
   <div class="vps-recommend-tab" onclick="openVpsModal()">捐赠支持</div>
 
-  <!-- Gateway Modal (网关自检与代理测试) -->
+
+  <!-- 3X-ui 对接助手 Modal -->
+  <div id="xui_helper_modal" class="modal">
+    <div class="modal-content" style="max-width: 860px; width: 94%; max-height: 88vh; overflow-y: auto;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px;">
+        <h3 style="margin: 0; font-size: 18px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+          <svg xmlns="http://www.w3.org/2000/svg" style="width:20px; height:20px; color: var(--primary);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
+          3X-ui 对接助手
+        </h3>
+        <button type="button" onclick="closeXuiHelperModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
+          <svg xmlns="http://www.w3.org/2000/svg" style="width:18px; height:18px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+        </button>
+      </div>
+
+      <div id="xui_helper_status" style="font-size: 13px; color: var(--text-secondary); margin-bottom: 14px;">正在加载本机代理信息...</div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px;">
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 12px; padding: 14px;">
+          <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 6px;">本地代理地址</div>
+          <div id="xui_proxy_hostport" class="mono" style="word-break: break-all;">-</div>
+        </div>
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 12px; padding: 14px;">
+          <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 6px;">代理用户名</div>
+          <div id="xui_proxy_user" class="mono" style="word-break: break-all;">-</div>
+        </div>
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 12px; padding: 14px;">
+          <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 6px;">代理密码</div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <div id="xui_proxy_pass" class="mono" style="word-break: break-all; flex: 1;">••••••••</div>
+            <button type="button" onclick="toggleXuiPassword()" style="height: 30px; padding: 0 10px; font-size: 12px;">显示</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px;">
+        <button type="button" onclick="copyXuiProxyUri('http')" class="btn-primary" style="height: 36px;">复制 HTTP 代理链接</button>
+        <button type="button" onclick="copyXuiProxyUri('socks5')" class="btn-primary" style="height: 36px; background: var(--success-gradient);">复制 SOCKS5 代理链接</button>
+        <button type="button" onclick="resetXuiProxyPassword()" class="btn-danger" style="height: 36px;">一键重置代理密码</button>
+      </div>
+
+      <div style="border-top: 1px dashed rgba(255,255,255,0.08); margin: 18px 0;"></div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px;">
+        <div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px;">
+            <strong style="font-size: 14px; color: var(--text-primary);">推荐：Xray HTTP 出站 JSON</strong>
+            <button type="button" onclick="copyXuiJson('http')" style="height: 30px; font-size: 12px;">复制</button>
+          </div>
+          <textarea id="xui_http_json" readonly style="width: 100%; min-height: 190px; resize: vertical; box-sizing: border-box; border-radius: 10px; border: 1px solid var(--border-color); background: rgba(0,0,0,0.25); color: var(--text-primary); padding: 12px; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px; line-height: 1.5;"></textarea>
+        </div>
+        <div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px;">
+            <strong style="font-size: 14px; color: var(--text-primary);">可选：Xray SOCKS 出站 JSON</strong>
+            <button type="button" onclick="copyXuiJson('socks')" style="height: 30px; font-size: 12px;">复制</button>
+          </div>
+          <textarea id="xui_socks_json" readonly style="width: 100%; min-height: 190px; resize: vertical; box-sizing: border-box; border-radius: 10px; border: 1px solid var(--border-color); background: rgba(0,0,0,0.25); color: var(--text-primary); padding: 12px; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px; line-height: 1.5;"></textarea>
+        </div>
+      </div>
+
+      <div style="background: rgba(99,102,241,0.08); border: 1px solid rgba(99,102,241,0.18); border-radius: 12px; padding: 14px; margin-top: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px;">
+          <strong style="font-size: 14px; color: var(--text-primary);">路由规则示例</strong>
+          <button type="button" onclick="copyXuiRouteRule()" style="height: 30px; font-size: 12px;">复制路由 JSON</button>
+        </div>
+        <textarea id="xui_route_json" readonly style="width: 100%; min-height: 86px; resize: vertical; box-sizing: border-box; border-radius: 10px; border: 1px solid var(--border-color); background: rgba(0,0,0,0.25); color: var(--text-primary); padding: 12px; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px; line-height: 1.5;"></textarea>
+        <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.6; margin-top: 8px;">把 <code>in-你的端口-tcp</code> 改成 3X-ui 实际入站 tag，例如 <code>in-55996-tcp</code>；出站选择 <code>aimilivpn-out</code>。</div>
+      </div>
+
+      <div style="border-top: 1px dashed rgba(255,255,255,0.08); margin: 18px 0;"></div>
+
+      <div style="background: rgba(255,255,255,0.025); border: 1px solid var(--border-color); border-radius: 12px; padding: 14px;">
+        <strong style="font-size: 14px; color: var(--text-primary);">3X-ui 入站端口检测</strong>
+        <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
+          <input id="xui_check_port" class="input-field" placeholder="输入 3X-ui 入站端口，如 55996" style="max-width: 260px; height: 38px;" />
+          <button type="button" onclick="checkXuiPort()" class="btn-primary" style="height: 38px;">检测端口</button>
+        </div>
+        <div id="xui_port_result" style="font-size: 13px; color: var(--text-secondary); margin-top: 10px; line-height: 1.6;"></div>
+      </div>
+
+      <div style="margin-top: 16px; font-size: 13px; color: var(--text-secondary); line-height: 1.7;">
+        <div><strong style="color: var(--text-primary);">小提示：</strong>如果本机端口已监听但客户端仍显示 -1，请检查 AWS / Oracle / 腾讯云 / 阿里云安全组是否放行你的 3X-ui 入站端口。7928 默认只给本机 Xray 使用，不需要公网放行。</div>
+        <div style="margin-top: 8px;"><strong style="color: var(--text-primary);">捐赠支持 USDT-TRC20：</strong><span class="mono" style="user-select: all;"> TF2kHq7KfiNuifkEv1aGcuD3EC2RhFU9Sk</span></div>
+      </div>
+    </div>
+  </div>
+
+    <!-- Gateway Modal (网关自检与代理测试) -->
   <div id="gateway_modal" class="modal">
     <div class="modal-content" style="max-width: 600px; width: 90%;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
@@ -3647,6 +4011,42 @@ const esc=s=>String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 const base=p=>(p||"").split(/[\\/]/).pop();
 function time(ts){return ts?new Date(ts*1000).toLocaleString():"从未"}
 function speed(v){return v?`${(v*8/1000/1000).toFixed(1)} Mbps`:"-"}
+function bytes(v){
+  v = Number(v || 0);
+  if (!v) return "-";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+function duration(v){
+  v = Number(v || 0);
+  if (!v) return "-";
+  const d = Math.floor(v / 86400);
+  const h = Math.floor((v % 86400) / 3600);
+  const m = Math.floor((v % 3600) / 60);
+  if (d > 0) return `${d}天 ${h}小时`;
+  if (h > 0) return `${h}小时 ${m}分`;
+  return `${m}分钟`;
+}
+function relativeTime(ts){
+  ts = Number(ts || 0);
+  if (!ts) return "从未";
+  const diff = Math.max(0, Math.floor(Date.now()/1000 - ts));
+  if (diff < 60) return `${diff}秒前`;
+  if (diff < 3600) return `${Math.floor(diff/60)}分钟前`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}小时前`;
+  return `${Math.floor(diff/86400)}天前`;
+}
+function countryFlag(code){
+  code = String(code || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return "🏳️";
+  return String.fromCodePoint(...[...code].map(c => 127397 + c.charCodeAt(0)));
+}
+function pct(v){ return Number(v || 0).toLocaleString(); }
+function nodeSearchText(n){
+  return [n.country, n.country_long, n.country_short, n.ip, n.remote_host, n.remote_port, n.host_name, n.owner, n.as_name, n.asn, n.location, n.ip_type, n.proto, n.probe_message].filter(Boolean).join(" | ");
+}
 
 const translateQuality = q => {
   const dict = {"normal": "普通", "proxy": "代理", "datacenter": "数据中心", "mobile": "移动端"};
@@ -3806,6 +4206,29 @@ function stableSortNodes() {
   });
 }
 
+function renderNodeDetailStats(list){
+  const el = $("node_detail_stats");
+  if (!el) return;
+  const arr = Array.isArray(list) ? list : [];
+  if (!arr.length) { el.style.display = "none"; el.innerHTML = ""; return; }
+  const available = arr.filter(n => n && n.probe_status === "available").length;
+  const active = arr.filter(n => n && n.active).length;
+  const countries = new Set(arr.map(n => n && (n.country_short || n.country)).filter(Boolean)).size;
+  const latencies = arr.map(n => Number(n && n.latency_ms || 0)).filter(v => v > 0);
+  const avgLatency = latencies.length ? Math.round(latencies.reduce((a,b)=>a+b,0)/latencies.length) + " ms" : "-";
+  const totalSessions = arr.reduce((sum,n)=>sum + Number(n && n.sessions || 0), 0);
+  const topSpeed = arr.reduce((max,n)=>Math.max(max, Number(n && n.speed || 0)), 0);
+  el.style.display = "grid";
+  el.innerHTML = `
+    <div class="node-summary-card"><span>当前筛选节点</span><strong>${arr.length}</strong></div>
+    <div class="node-summary-card"><span>可用 / 已连接</span><strong>${available} / ${active}</strong></div>
+    <div class="node-summary-card"><span>国家/地区数量</span><strong>${countries}</strong></div>
+    <div class="node-summary-card"><span>平均检测延迟</span><strong>${avgLatency}</strong></div>
+    <div class="node-summary-card"><span>当前连接人数合计</span><strong>${pct(totalSessions)}</strong></div>
+    <div class="node-summary-card"><span>最高节点速率</span><strong>${speed(topSpeed)}</strong></div>
+  `;
+}
+
 function render(){
   const activeNodeId = state.active_openvpn_node_id;
   const activeNode = nodes.find(n => n && (n.active || n.id === activeNodeId));
@@ -3844,7 +4267,7 @@ function render(){
           <div class="active-card-details">
             <div class="active-card-title">
               <span class="badge available"><span class="badge-pulse"></span>已连接</span>
-              <strong>${esc(translateCountry(activeNode.country))} 节点</strong>
+              <strong>${countryFlag(activeNode.country_short)} ${esc(translateCountry(activeNode.country))} 节点</strong>
             </div>
             <div class="active-card-value mono" style="font-size: 20px; margin-top: 2px;">
               ${esc(activeNode.ip || activeNode.remote_host)}:${activeNode.remote_port || ""}
@@ -3852,6 +4275,10 @@ function render(){
             <div class="active-card-meta" style="margin-top: 4px;">
               <span>物理位置: <strong>${esc(displayLocation)}</strong></span>
               <span style="margin-left: 12px;">延时: <strong>${latencyText}</strong></span>
+              <span style="margin-left: 12px;">连接人数: <strong>${pct(activeNode.sessions)}</strong></span>
+              <span style="margin-left: 12px;">在线时间: <strong>${duration(activeNode.uptime)}</strong></span>
+              <span style="margin-left: 12px;">速度: <strong>${speed(activeNode.speed)}</strong></span>
+              <span style="margin-left: 12px;">评分: <strong>${pct(activeNode.score)}</strong></span>
               <span style="margin-left: 12px;">运营主体: <strong>${esc(activeNode.owner || activeNode.as_name || "-")}</strong></span>
               <span style="margin-left: 12px;">IP 类型: <strong>${esc(translateIpType(activeNode.ip_type))}</strong></span>
             </div>
@@ -3884,6 +4311,7 @@ function render(){
   }
 
   const shown = getFilteredNodes();
+  renderNodeDetailStats(shown);
   
   if ($("total")) $("total").textContent = nodes.length; 
   if ($("target")) $("target").textContent = state.target_valid_nodes || 3;
@@ -3956,7 +4384,7 @@ function render(){
 
   // Render table rows
   if (currentPageNodes.length === 0) {
-    $("rows").innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--text-secondary); padding: 40px 0;">未找到符合过滤条件的备选节点。</td></tr>`;
+    $("rows").innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--text-secondary); padding: 40px 0;">未找到符合过滤条件的备选节点。</td></tr>`;
   } else {
     $("rows").innerHTML=currentPageNodes.map(n=>{
       if (!n) return '';
@@ -3987,15 +4415,70 @@ function render(){
         ? `<button class="test-btn" style="color: var(--warning); border-color: rgba(245, 158, 11, 0.4); padding: 0 8px; height: 30px;" onclick="toggleFavorite('${esc(n.id)}', event)">★ 已收藏</button>`
         : `<button class="test-btn" style="color: var(--text-secondary); border-color: var(--border-color); padding: 0 8px; height: 30px;" onclick="toggleFavorite('${esc(n.id)}', event)">☆ 收藏</button>`;
 
-      return `<tr ${rowClass}>
+      const flag = countryFlag(n.country_short);
+      const countryMain = translateCountry(n.country) || n.country_long || n.country_short || "未知";
+      const countrySub = [n.country_short, n.host_name].filter(Boolean).join(" · ") || "-";
+      const endpoint = `${n.ip || n.remote_host || "-"}:${n.remote_port || ""}`;
+      const remoteSub = [String(n.proto || "").toUpperCase(), n.id].filter(Boolean).join(" · ");
+      const pingText = n.ping ? `<span class="mini-pill">API Ping ${n.ping} ms</span>` : `<span class="mini-pill">API Ping -</span>`;
+      const scoreText = `<span class="mini-pill">评分 ${pct(n.score)}</span>`;
+      const sessionsText = `<span class="mini-pill">在线 ${pct(n.sessions)}</span>`;
+      const totalUsersText = n.total_users ? `<span class="mini-pill">累计用户 ${pct(n.total_users)}</span>` : "";
+      const speedText = `<span class="mini-pill">速度 ${speed(n.speed)}</span>`;
+      const trafficText = n.total_traffic ? `<span class="mini-pill">流量 ${bytes(n.total_traffic)}</span>` : "";
+      const uptimeText = duration(n.uptime);
+      const fetchedText = relativeTime(n.fetched_at);
+      const probedText = relativeTime(n.probed_at);
+      const ispTitle = [n.owner, n.as_name, n.asn, n.operator, displayLocation].filter(Boolean).join(" / ") || "-";
+      const ispMain = n.owner || n.as_name || n.operator || "-";
+      const ispSub = [n.asn, displayLocation].filter(Boolean).join(" · ") || "-";
+      const checkTitle = [n.probe_message, n.message].filter(Boolean).join(" / ") || "-";
+      return `<tr ${rowClass} title="${esc(nodeSearchText(n))}">
         <td><span class="badge ${badgeClass}">${badgeText}</span></td>
-        <td class="mono" style="white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis;" title="${esc(n.ip||n.remote_host)}:${n.remote_port||""}">${esc(n.ip||n.remote_host)}:${n.remote_port||""}</td>
-        <td style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${esc(displayLocation)}">${esc(displayLocation)}</td>
-        <td style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${esc(n.owner||n.as_name||"-")}">${esc(n.owner||n.as_name||"-")}</td>
-        <td style="white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis;" title="${esc(translateIpType(n.ip_type))}">${esc(translateIpType(n.ip_type))}</td>
         <td>
-          <div class="table-actions">
+          <div class="node-country-cell">
+            <span class="node-flag">${flag}</span>
+            <div style="min-width:0;">
+              <div class="node-main-text" title="${esc(countryMain)}">${esc(countryMain)}</div>
+              <div class="node-sub-text" title="${esc(countrySub)}">${esc(countrySub)}</div>
+            </div>
+          </div>
+        </td>
+        <td class="mono" title="${esc(endpoint)}">
+          <div class="node-main-text mono">${esc(endpoint)}</div>
+          <div class="node-sub-text">${esc(remoteSub)}</div>
+        </td>
+        <td>
+          <div>${latencyText}</div>
+          <div class="node-detail-line">${pingText}</div>
+        </td>
+        <td>
+          <div class="node-detail-line">${sessionsText}${scoreText}</div>
+          <div class="node-detail-line">${speedText}${totalUsersText}${trafficText}</div>
+        </td>
+        <td>
+          <div class="node-main-text">${esc(uptimeText)}</div>
+          <div class="node-sub-text">拉取 ${esc(fetchedText)}</div>
+        </td>
+        <td title="${esc(ispTitle)}">
+          <div class="node-main-text">${esc(ispMain)}</div>
+          <div class="node-sub-text">${esc(ispSub)}</div>
+        </td>
+        <td>
+          <div class="node-detail-line">
+            <span class="mini-pill">${esc(String(n.proto || "-").toUpperCase())}</span>
+            <span class="mini-pill">${esc(translateIpType(n.ip_type))}</span>
+          </div>
+          <div class="node-sub-text">${esc(translateQuality(n.quality))}</div>
+        </td>
+        <td title="${esc(checkTitle)}">
+          <div class="node-main-text">${esc(probedText)}</div>
+          <div class="node-sub-text">${esc(n.probe_message || n.message || "-")}</div>
+        </td>
+        <td>
+          <div class="table-actions" style="flex-wrap: wrap;">
             ${favBtn}
+            ${testBtn}
             ${connectBtn}
           </div>
         </td>
@@ -4686,6 +5169,134 @@ async function saveNetwork(e) {
 
 
 
+let xuiHelperInfo = null;
+let xuiPasswordVisible = false;
+
+function copyTextToClipboard(text, label) {
+  text = String(text || "");
+  if (!text) {
+    alert("没有可复制的内容");
+    return;
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => alert((label || "内容") + "已复制"))
+      .catch(() => fallbackCopyText(text, label));
+  } else {
+    fallbackCopyText(text, label);
+  }
+}
+
+function fallbackCopyText(text, label) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand("copy");
+  document.body.removeChild(ta);
+  alert((label || "内容") + "已复制");
+}
+
+async function openXuiHelperModal() {
+  $("admin_dropdown").style.display = "none";
+  $("xui_helper_modal").style.display = "flex";
+  $("xui_helper_status").textContent = "正在加载本机代理信息...";
+  try {
+    const res = await fetch("./api/interop_info");
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || "加载失败");
+    xuiHelperInfo = data;
+    renderXuiHelperInfo();
+  } catch (err) {
+    $("xui_helper_status").textContent = "加载失败：" + err.message;
+  }
+}
+
+function closeXuiHelperModal() {
+  $("xui_helper_modal").style.display = "none";
+}
+
+function renderXuiHelperInfo() {
+  const info = xuiHelperInfo || {};
+  const proxy = info.proxy || {};
+  const xray = info.xray || {};
+  $("xui_helper_status").innerHTML = proxy.auth_enabled
+    ? "✅ 本地代理已开启认证，复制 3X-ui 出站配置即可对接。"
+    : "⚠️ 本地代理未开启认证，建议只保持 127.0.0.1 本机监听。";
+  $("xui_proxy_hostport").textContent = `${proxy.host || "127.0.0.1"}:${proxy.port || 7928}`;
+  $("xui_proxy_user").textContent = proxy.username || "未设置";
+  $("xui_proxy_pass").textContent = xuiPasswordVisible ? (proxy.password || "未设置") : "••••••••";
+  $("xui_http_json").value = JSON.stringify(xray.http_outbound || {}, null, 2);
+  $("xui_socks_json").value = JSON.stringify(xray.socks_outbound || {}, null, 2);
+  $("xui_route_json").value = JSON.stringify(xray.routing_rule || {}, null, 2);
+}
+
+function toggleXuiPassword() {
+  xuiPasswordVisible = !xuiPasswordVisible;
+  renderXuiHelperInfo();
+}
+
+function copyXuiProxyUri(type) {
+  const proxy = (xuiHelperInfo || {}).proxy || {};
+  const uri = type === "socks5" ? proxy.socks5_uri : proxy.http_uri;
+  copyTextToClipboard(uri, type === "socks5" ? "SOCKS5 代理链接" : "HTTP 代理链接");
+}
+
+function copyXuiJson(type) {
+  const el = type === "socks" ? $("xui_socks_json") : $("xui_http_json");
+  copyTextToClipboard(el ? el.value : "", type === "socks" ? "SOCKS 出站 JSON" : "HTTP 出站 JSON");
+}
+
+function copyXuiRouteRule() {
+  copyTextToClipboard($("xui_route_json").value, "路由规则 JSON");
+}
+
+async function checkXuiPort() {
+  const port = parseInt($("xui_check_port").value, 10);
+  const result = $("xui_port_result");
+  if (isNaN(port) || port < 1 || port > 65535) {
+    result.style.color = "var(--danger)";
+    result.textContent = "请输入 1-65535 之间的有效端口";
+    return;
+  }
+  result.style.color = "var(--text-secondary)";
+  result.textContent = "正在检测端口...";
+  try {
+    const res = await fetch(`./api/check_local_port?port=${port}`);
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || "检测失败");
+    if (data.listening) {
+      result.style.color = "var(--success)";
+      result.textContent = `✅ 端口 ${port} 本机已监听。${data.raw_hint || "如果外部仍不通，请检查云安全组。"}`;
+    } else {
+      result.style.color = "var(--danger)";
+      result.textContent = `❌ 端口 ${port} 未检测到监听。${data.raw_hint || "请检查 3X-ui 入站和 Xray 是否启动。"}`;
+    }
+  } catch (err) {
+    result.style.color = "var(--danger)";
+    result.textContent = "检测失败：" + err.message;
+  }
+}
+
+async function resetXuiProxyPassword() {
+  if (!confirm("确定要重置 AimiliVPN 本地代理密码吗？\n\n重置后服务会自动重启，你必须把 3X-ui 出站里的密码同步改成新密码。")) return;
+  try {
+    const res = await fetch("./api/reset_proxy_password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || "重置失败");
+    const msg = `新代理密码：${data.new_password}\n\n请复制保存，并更新 3X-ui 出站配置。服务将在几秒内重启，页面稍后刷新。`;
+    copyTextToClipboard(data.new_password, "新代理密码");
+    alert(msg);
+    setTimeout(() => window.location.reload(), 5000);
+  } catch (err) {
+    alert("重置失败：" + err.message);
+  }
+}
+
+
 function openVpsModal() {
   $("vps_recommend_modal").style.display = "flex";
 }
@@ -5262,6 +5873,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
         elif effective_path == "/api/subscription_info":
             self.send_json({"ok": True, **subscription_urls(self.headers)})
+        elif effective_path == "/api/interop_info":
+            self.send_json({"ok": True, **build_interop_info()})
+        elif effective_path == "/api/check_local_port":
+            try:
+                port = int((query.get("port") or [""])[0])
+                self.send_json({"ok": True, **check_local_listening_port(port)})
+            except Exception as exc:
+                self.send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif effective_path == "/api/gateway_status":
             web_ui_status = {
                 "name": "Web 管理服务",

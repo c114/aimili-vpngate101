@@ -1,86 +1,199 @@
-# AimiliVPN 🌐
+# ZhoudongVPN 🌐
 
-**Private VPNGate Gateway / 私有化 VPNGate 代理网关**
+**私有化 VPNGate 代理网关 / Private VPNGate Gateway**
 
-Bilingual: [中文](#中文-chinese) | [English](#english)
+ZhoudongVPN 是一款基于官方 VPNGate 开放协议的私有化代理网关，使用 Python 标准库编写，内置 Web 管理后台，支持节点测速、自动切换、HTTP/SOCKS5 本地代理、3X-ui 对接助手、Clash 订阅导出、实时日志和网关诊断。
 
----
-
-<a name="中文-chinese"></a>
-## 中文 (Chinese)
-
-AimiliVPN 是一款基于官方 VPNGate 开放协议的私有化 VPN 代理网关。它使用纯 Python 标准库编写，内置响应式 Web 管理后台，支持智能并发测速、多路由模式、出站代理网关、实时日志、Clash 订阅导出和网关状态诊断。
-
-本版本在原有功能基础上进行了私有化安全加固，适合部署在个人 Linux VPS 上自用，或在小范围授权场景中使用。
+本项目适合部署在个人 Linux VPS 上自用，或给小范围用户授权部署使用。
 
 ---
 
-## 📢 官方交流与反馈
+## 📢 项目链接
 
-Telegram Forum | YouTube | Email
+- Telegram：<https://t.me/+7ES4cXxAwEYzNTI1>
+- GitHub：<https://github.com/c114/aimili-vpngate101>
+- USDT-TRC20 捐赠地址：`TF2kHq7KfiNuifkEv1aGcuD3EC2RhFU9Sk`
 
 ---
 
-## 🚀 一键极速部署
+## 🚀 一键部署
 
-在您的 Linux VPS 上以 `root` 用户执行以下命令。
-
-### 🌟 正式稳定版本 main 分支
+在 Linux VPS 上使用 `root` 执行：
 
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/c114/aimili-vpngate101/main/install.sh)
 ```
 
-如果安装脚本需要指定仓库用户名和仓库名，可使用：
-
-```bash
-bash <(curl -Ls https://raw.githubusercontent.com/c114/aimili-vpngate101/main/install.sh) 你的GitHub用户名 你的仓库名
-```
-
-### 🧪 测试开发版本 bate 分支
-
-```bash
-bash <(curl -Ls https://raw.githubusercontent.com/c114/aimili-vpngate101/bate/install.sh)
-```
-
-💡 小贴士：部署完成后，终端会输出管理网页的专属链接，包含随机安全后缀，例如：
+安装完成后，终端会输出：
 
 ```text
-http://your_vps_ip:8787/u71e9IXp4TPx/
+后台地址
+登录用户名
+登录密码
+随机安全路径
 ```
 
-同时会输出后台登录账号和随机密码。后续可在终端输入：
+然后用浏览器打开终端输出的后台地址即可登录。
+
+---
+
+## 🔄 已安装机器更新方式
+
+如果 VPS 已经安装过，推荐直接使用内置命令更新：
+
+```bash
+ml update
+```
+
+也可以手动更新：
+
+```bash
+cd /opt/aimilivpn
+git pull
+python3 -m py_compile vpngate_manager.py proxy_server.py vpn_utils.py
+systemctl restart aimilivpn
+```
+
+如果 `git pull` 不生效，可以重新执行一键安装命令。安装脚本检测到 `/opt/aimilivpn` 已存在时，会自动拉取仓库最新代码并重启服务：
+
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/c114/aimili-vpngate101/main/install.sh)
+```
+
+---
+
+## 🧭 常用命令
+
+安装后可在 VPS 终端使用：
 
 ```bash
 ml
 ```
 
-调出交互式命令行管理菜单。
+打开交互式菜单。
+
+常用快捷命令：
+
+```bash
+ml status     # 查看服务状态
+ml logs       # 查看实时日志
+ml restart    # 重启服务
+ml stop       # 停止服务
+ml start      # 启动服务
+ml update     # 从 GitHub 更新代码并重启
+ml web        # 修改 Web 后台地址、端口、路径
+ml port       # 修改 Web/代理端口
+ml password   # 重置后台登录账号密码
+ml uninstall  # 完全卸载
+```
 
 ---
 
-## 🔐 本版本安全加固说明
+## ✨ 面板新增功能
 
-本版本保留 Web 后台登录管理，同时对默认部署方式进行了安全加固。
+### 1. 节点详细信息增强
 
-### 1. Web 后台仍可登录管理
+节点列表现在会尽量展示 VPNGate API 和本地检测能获取到的信息，包括：
 
-部署完成后，终端会输出：
+```text
+国家国旗
+国家 / 地区代码
+节点 IP 和端口
+协议 TCP/UDP
+VPNGate API Ping
+实际检测延迟
+当前连接人数
+节点评分
+节点速度
+累计用户数
+累计流量
+在线时间
+运营商 / ISP
+ASN
+物理位置
+IP 类型：住宅 / 机房 / 移动网
+质量标记
+最后拉取时间
+最后检测时间
+检测状态说明
+```
 
-- 后台访问地址
-- 登录用户名
-- 随机强密码
-- 随机安全路径
+节点列表上方也增加了汇总卡片：
 
-用户可以正常登录后台进行节点管理、节点更新、路由切换、日志查看、网关检测和 Clash 订阅管理。
+```text
+当前筛选节点数量
+可用 / 已连接数量
+国家地区数量
+平均检测延迟
+当前连接人数合计
+最高节点速率
+```
+
+当前连接卡片也会显示国旗、在线时间、速度、评分、连接人数、运营商、IP 类型和位置等信息。
 
 ---
 
-### 2. Web 登录防爆破
+### 2. 3X-ui 对接助手
 
-后台登录接口已加入失败次数限制和临时锁定机制，降低公网后台被爆破的风险。
+登录后台后进入：
 
-默认策略：
+```text
+管理员 -> 3X-ui 对接
+```
+
+可以直接完成以下操作：
+
+```text
+查看 AimiliVPN 本地代理地址、端口、用户名、密码
+一键复制 HTTP 代理链接
+一键复制 SOCKS5 代理链接
+一键复制 Xray HTTP 出站 JSON
+一键复制 Xray SOCKS 出站 JSON
+一键复制 3X-ui 路由规则示例
+输入 3X-ui 入站端口并检测是否监听
+一键重置 AimiliVPN 本地代理密码
+复制 USDT-TRC20 捐赠地址
+```
+
+推荐 3X-ui 链路：
+
+```text
+客户端 -> 3X-ui 入站 -> aimilivpn-out -> 127.0.0.1:7928 -> ZhoudongVPN -> VPNGate 出口
+```
+
+如果 3X-ui 分享节点测速显示 `-1`，优先检查：
+
+```text
+1. 3X-ui 入站端口是否监听
+2. 云服务商安全组是否放行该入站端口
+3. Xray 路由是否设置为 in-端口-tcp -> aimilivpn-out
+4. aimilivpn-out 的用户名密码是否和面板显示一致
+```
+
+注意：`7928` 是本机代理端口，默认只给 VPS 本机和 Xray 使用，不需要在云安全组里公网放行。需要放行的是 3X-ui 的入站端口，例如 `55996/tcp`。
+
+---
+
+### 3. 代理信息复制与密码重置
+
+后台可直接复制：
+
+```text
+HTTP 代理链接
+SOCKS5 代理链接
+Xray HTTP 出站配置
+Xray SOCKS 出站配置
+```
+
+如果代理密码泄露，可以在后台 3X-ui 对接助手里一键重置代理密码，也可以在 VPS 终端手动修改 `/etc/default/aimilivpn` 后重启服务。
+
+---
+
+## 🔐 安全加固说明
+
+### Web 后台登录保护
+
+后台保留账号密码登录，并带随机安全路径。登录接口带防爆破限制：
 
 ```bash
 UI_LOGIN_MAX_ATTEMPTS=8
@@ -88,91 +201,43 @@ UI_LOGIN_WINDOW_SECONDS=900
 UI_LOGIN_LOCK_SECONDS=600
 ```
 
-含义为：15 分钟内连续失败 8 次后，临时锁定 10 分钟。
+默认含义：15 分钟内连续失败 8 次后，临时锁定 10 分钟。
 
----
+### 后台密码哈希存储
 
-### 3. 后台密码哈希存储
+首次安装时会生成随机强密码。首次成功登录后，后台密码会迁移为 PBKDF2 哈希保存。后台修改密码后也会继续使用哈希存储。
 
-首次安装时，系统会生成随机强密码，方便首次登录。
-
-首次成功登录后，程序会自动将明文密码迁移为 PBKDF2 哈希格式保存。之后在后台修改密码，也会以哈希形式保存，减少长期明文密码落盘风险。
-
-如果忘记后台密码，可以在 VPS 终端执行：
+忘记后台密码时执行：
 
 ```bash
 ml password
 ```
 
-重新生成后台登录密码。
+### 本地代理默认仅监听本机
 
----
-
-### 4. 本地代理默认仅监听本机
-
-AimiliVPN 内置双协议代理服务，默认端口为：
-
-```text
-7928
-```
-
-该端口自适应支持：
-
-- HTTP Proxy
-- SOCKS5 Proxy
-
-为了防止代理端口暴露到公网后被恶意扫描和滥用，本版本默认仅监听：
-
-```text
-127.0.0.1
-```
-
-也就是只允许 VPS 本机访问代理服务。
-
-推荐在本地电脑通过 SSH 隧道安全使用代理：
-
-```bash
-ssh -L 7928:127.0.0.1:7928 root@your_vps_ip
-```
-
-然后在本地浏览器、代理工具、爬虫程序或 Clash 中配置：
+ZhoudongVPN 内置 HTTP/SOCKS5 双协议代理，默认：
 
 ```text
 127.0.0.1:7928
 ```
 
----
+默认不对公网开放，避免被扫描和滥用。
 
-### 5. 代理账号密码与 IP 白名单
-
-代理服务支持用户名密码认证和 IP 白名单限制。
-
-推荐配置示例：
+如需本地电脑使用，推荐 SSH 隧道：
 
 ```bash
-LOCAL_PROXY_HOST=127.0.0.1
-LOCAL_PROXY_ALLOWED_IPS=127.0.0.1/32,::1/128
-LOCAL_PROXY_USER=privategate
-LOCAL_PROXY_PASS=请设置高强度随机密码
-LOCAL_PROXY_MAX_CONNECTIONS=64
+ssh -L 7928:127.0.0.1:7928 root@your_vps_ip
 ```
 
-如果确实需要向公网其他设备开放代理端口，请务必同时配置：
+然后本地代理填写：
 
-- 强密码
-- 防火墙白名单
-- 云服务商安全组白名单
-- 仅允许可信 IP 访问
+```text
+127.0.0.1:7928
+```
 
-不建议直接把代理端口无保护地暴露到公网。
+### OpenVPN 配置过滤
 
----
-
-### 6. OpenVPN 配置安全过滤
-
-VPNGate 节点配置来自公开节点源。为降低风险，AimiliVPN 会在写入和启动 OpenVPN 配置前过滤危险指令。
-
-系统会拒绝或移除以下高风险 OpenVPN 指令：
+VPNGate 节点配置来自公开节点源。程序会在写入 `.ovpn` 前过滤危险 OpenVPN 指令，例如：
 
 ```text
 script-security
@@ -187,15 +252,11 @@ client-connect
 client-disconnect
 ```
 
-这样可以降低外部 `.ovpn` 配置在高权限环境下执行危险脚本或加载异常插件的风险。
+### DNS 自动修复默认关闭
 
----
+默认只诊断 DNS 异常，不自动修改 `/etc/resolv.conf`。
 
-### 7. DNS 自动修复默认关闭
-
-本版本默认只诊断 DNS 异常，不会自动修改系统 `/etc/resolv.conf`，避免影响云厂商 DNS、公司内网 DNS 或 systemd-resolved 配置。
-
-如确实需要自动修复 DNS，可手动开启：
+如确实需要自动修复 DNS，可设置：
 
 ```bash
 AUTO_FIX_DNS=1
@@ -203,102 +264,66 @@ AUTO_FIX_DNS=1
 
 ---
 
-### 8. Clash 订阅接口已补齐
-
-本版本已补齐订阅信息接口：
-
-```text
-/api/subscription_info
-```
-
-该接口需要登录后台后访问，不会对未授权用户公开返回订阅 token。
-
-Clash 订阅链接通常类似：
-
-```text
-http://your_vps_ip:8787/随机安全后缀/sub/clash?token=你的订阅token
-```
-
-请妥善保管订阅链接。订阅链接中可能包含代理连接信息，泄露后可能导致他人使用您的代理服务。
-
----
-
 ## 💡 快速使用指南
 
-部署成功后，如何使用它进行代理出站？
+### 第一步：登录后台
 
-### 第一步：登录 Web 管理后台
-
-打开浏览器，访问部署完成时终端提示的专属后台地址：
+打开安装完成后终端输出的地址：
 
 ```text
 http://your_vps_ip:8787/随机安全后缀/
 ```
 
-输入终端输出的用户名和密码，即可进入 Web 管理后台。
+输入终端显示的用户名和密码登录。
 
-后台支持：
+### 第二步：更新并连接节点
 
-- 查看节点列表
-- 更新 VPNGate 节点
-- 智能测速
-- 切换出站节点
-- 固定国家/地区
-- 固定 IP 节点
-- 查看实时日志
-- 检测代理出口 IP
-- 导出 Clash 订阅
-- 查看网关运行状态
-
----
-
-### 第二步：获取并连接节点
-
-首次进入后台时，节点列表可能仍在首次自动测速和拉取中。
-
-您可以点击：
+进入后台后点击：
 
 ```text
 更新节点
 ```
 
-系统会在后台通过多线程并发测速，自动筛选出延迟较低、可连接的 VPNGate 节点。
+程序会拉取 VPNGate 节点并进行并发测速。
 
-支持三种常用路由模式：
-
-#### 智能自动配置，推荐
-
-如果当前连接的节点失效，系统会自动切换至其他备用健康节点，无需手动干预。
-
-#### 固定国家/地区
-
-只选择指定国家或地区的最佳节点，例如：
+支持：
 
 ```text
-JP 日本
-KR 韩国
-US 美国
-SG 新加坡
-TW 台湾
+智能自动模式
+固定国家/地区
+固定 IP 节点
+收藏节点优先
 ```
 
-#### 固定 IP 节点
+### 第三步：使用代理
 
-始终锁定连接到某一个特定节点。
+VPS 本机测试 HTTP 代理：
 
-适合需要稳定出口 IP 的场景，但该节点失效后需要手动切换或重新选择。
+```bash
+set -a
+. /etc/default/aimilivpn
+set +a
+LOCAL_PROXY_PORT=${LOCAL_PROXY_PORT:-7928}
 
----
-
-### 第三步：使用本机代理
-
-AimiliVPN 默认在 VPS 本机启动代理：
-
-```text
-127.0.0.1:7928
+curl -x "http://127.0.0.1:${LOCAL_PROXY_PORT}" \
+  -U "${LOCAL_PROXY_USER}:${LOCAL_PROXY_PASS}" \
+  https://api.ipify.org
 ```
 
-#### Python 脚本中使用代理
+测试 SOCKS5 代理：
+
+```bash
+set -a
+. /etc/default/aimilivpn
+set +a
+LOCAL_PROXY_PORT=${LOCAL_PROXY_PORT:-7928}
+
+curl --proxy "socks5h://127.0.0.1:${LOCAL_PROXY_PORT}" \
+  --proxy-user "${LOCAL_PROXY_USER}:${LOCAL_PROXY_PASS}" \
+  https://api.ipify.org
+```
+
+Python 使用示例：
 
 ```python
 import requests
@@ -308,231 +333,161 @@ proxies = {
     "https": "http://127.0.0.1:7928",
 }
 
-response = requests.get("https://www.google.com", proxies=proxies, timeout=15)
-print(response.text[:500])
-```
-
-#### Shell 终端环境中使用代理
-
-```bash
-export http_proxy="http://127.0.0.1:7928"
-export https_proxy="http://127.0.0.1:7928"
-
-curl https://ipinfo.io
-```
-
-#### SOCKS5 使用方式
-
-```text
-socks5://127.0.0.1:7928
-```
-
-如果启用了代理账号密码，则格式为：
-
-```text
-socks5://用户名:密码@127.0.0.1:7928
+r = requests.get("https://api.ipify.org", proxies=proxies, timeout=15)
+print(r.text)
 ```
 
 ---
 
-## 🛠️ 核心功能与操作说明
+## 🧩 3X-ui 对接示例
 
-### 合并操作面板
+3X-ui / Xray 出站推荐使用后台自动生成的配置。手动配置时可参考：
 
-将“更新节点”与“立即检测补齐”合并，一键触发多线程拉取与测速。
+```json
+{
+  "tag": "aimilivpn-out",
+  "protocol": "http",
+  "settings": {
+    "servers": [
+      {
+        "address": "127.0.0.1",
+        "port": 7928,
+        "users": [
+          {
+            "user": "填写面板显示的代理用户名",
+            "pass": "填写面板显示的代理密码"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
 
-### 网关状态面板
+路由规则示例：
 
-- 检测网关心跳
-- 检查 Web 服务是否正常
-- 检查 VPN 连接管理线程是否正常
-- 检查出站代理网关服务是否正常
-- 检测真实代理出站 IP 和所在地理位置
+```json
+{
+  "type": "field",
+  "inboundTag": [
+    "in-55996-tcp"
+  ],
+  "outboundTag": "aimilivpn-out"
+}
+```
 
-### 日志追踪面板
+如果客户端测速 `-1`：
 
-- 分类过滤日志
-- 实时滚动加载
-- 查看 VPN 连接日志
-- 查看 API 请求日志
-- 查看系统异常日志
-- 支持复制日志
-- 支持导出 `.log` 日志文件
+```bash
+ss -lntp | grep 55996
+ufw status
+```
 
-### 私有代理网关
+云服务器还需要在安全组放行 3X-ui 入站端口，例如：
 
-- HTTP Proxy
-- SOCKS5 Proxy
-- 账号密码认证
-- IP 白名单
-- 最大连接数限制
-- 默认仅本机监听
-- 可配合 SSH 隧道安全使用
+```text
+TCP 55996
+```
+
+不要公网放行 `7928`，除非你明确知道自己在做什么，并设置了强密码和 IP 白名单。
 
 ---
 
-## ⚠️ 小白安装与运行常见问题 FAQ
-
-### 1. 提示 Cannot allocate tun 或 Cannot open tun/tap dev
-
-原因：VPS 宿主机未启用虚拟网卡 TUN/TAP 设备。这种情况常见于 LXC 或 OpenVZ 架构的轻量 VPS。
-
-解决办法：登录 VPS 服务商控制面板，找到：
+## 🛠️ 核心功能
 
 ```text
-Enable TUN/TAP
+Web 管理后台
+节点自动拉取
+节点并发测速
+节点详细信息展示
+当前连接详情卡片
+智能自动切换
+固定国家/地区
+固定 IP 节点
+收藏节点优先
+HTTP/SOCKS5 本地代理
+3X-ui 对接助手
+Xray 出站配置复制
+3X-ui 入站端口检测
+代理密码一键重置
+Clash 订阅导出
+网关状态检测
+代理出口 IP 检测
+实时日志查看
+日志导出
+后台登录防爆破
+OpenVPN 配置安全过滤
 ```
-
-或：
-
-```text
-开启 TUN
-```
-
-启用后重启 VPS。
-
-如果没有该选项，请提交工单联系客服开启。
 
 ---
 
-### 2. Web 管理后台无法打开
+## ⚠️ 常见问题 FAQ
 
-#### 原因一：服务没有启动
+### 1. Cannot allocate tun / Cannot open tun/tap dev
 
-请执行：
+原因：VPS 未启用 TUN/TAP。
+
+解决：在服务商控制台开启 TUN/TAP 后重启 VPS。如果控制台没有该选项，请提交工单。
+
+### 2. Web 后台打不开
+
+检查服务：
 
 ```bash
-systemctl status aimilivpn
+systemctl status aimilivpn --no-pager
 ```
 
-或输入：
+检查端口：
 
 ```bash
-ml
+ss -lntp | grep 8787
 ```
 
-查看服务状态。
-
-#### 原因二：VPS 防火墙未放行后台端口
-
-默认后台端口：
-
-```text
-8787
-```
-
-Ubuntu/Debian：
+系统防火墙放行：
 
 ```bash
 ufw allow 8787/tcp
 ```
 
-CentOS/RHEL：
-
-```bash
-firewall-cmd --zone=public --add-port=8787/tcp --permanent
-firewall-cmd --reload
-```
-
-#### 原因三：云服务商安全组未放行
-
-登录云服务商控制台，在安全组入站规则中放行：
+云服务商安全组也需要放行：
 
 ```text
 TCP 8787
 ```
 
-如果只想自己访问后台，建议授权对象填写自己的家庭公网 IP，而不是 `0.0.0.0/0`。
+### 3. 3X-ui 分享节点显示 -1
 
----
+先确认 AimiliVPN 本地代理可用：
 
-### 3. 代理端口 7928 从外部访问不了
+```bash
+set -a
+. /etc/default/aimilivpn
+set +a
+LOCAL_PROXY_PORT=${LOCAL_PROXY_PORT:-7928}
 
-这是正常现象。
+curl -x "http://127.0.0.1:${LOCAL_PROXY_PORT}" \
+  -U "${LOCAL_PROXY_USER}:${LOCAL_PROXY_PASS}" \
+  https://api.ipify.org
+```
 
-为了安全，本版本默认只让代理监听：
+如果能返回 IP，再检查：
 
 ```text
-127.0.0.1
+3X-ui 入站端口是否监听
+Xray 出站是否选择 aimilivpn-out
+路由规则是否绑定正确入站 tag
+云服务商安全组是否放行 3X-ui 入站端口
 ```
 
-也就是只允许 VPS 本机访问。
+### 4. API Domain Blocked / 备用节点为 0
 
-推荐通过 SSH 隧道使用：
+可能是 DNS、网络或 VPNGate API 访问异常。可在后台配置上游代理，或检查 DNS。默认不会自动修改系统 DNS。
 
-```bash
-ssh -L 7928:127.0.0.1:7928 root@your_vps_ip
-```
+### 5. VPN 已连接但代理无流量
 
-如果确实需要公网设备直接访问代理，请自行修改环境变量：
+可能是路由、TUN、rp_filter、iptables/nftables 或节点失效。可先查看后台网关状态和日志。
 
-```bash
-LOCAL_PROXY_HOST=0.0.0.0
-LOCAL_PROXY_ALLOWED_IPS=你的公网IP/32
-LOCAL_PROXY_USER=你的用户名
-LOCAL_PROXY_PASS=高强度随机密码
-```
-
-修改后重启服务：
-
-```bash
-systemctl restart aimilivpn
-```
-
-强烈不建议将代理端口无密码、无白名单地暴露到公网。
-
----
-
-### 4. 页面提示 API Domain Blocked 且备选节点显示为 0
-
-可能原因：
-
-- VPS DNS 解析异常
-- VPNGate 域名被网络环境干扰
-- 当前服务器无法访问 VPNGate API
-- 上游网络对相关域名有限制
-
-解决办法：
-
-- 在 Web 后台配置可用上游代理
-- 手动检查 VPS DNS
-- 检查服务器防火墙和云服务商网络限制
-
-本版本默认不会自动修改 `/etc/resolv.conf`。
-
-如确认需要自动修复 DNS，可设置：
-
-```bash
-AUTO_FIX_DNS=1
-```
-
-然后重启服务。
-
----
-
-### 5. VPN 已连接，但客户端设置代理后无法上网
-
-可能原因：
-
-- TUN 设备异常
-- 系统路由未生效
-- iptables/nftables 规则冲突
-- rp_filter 反向路径过滤过严格
-- 当前 VPNGate 节点失效
-
-解决办法：
-
-先在后台点击网关状态检测，再查看日志面板中的 OpenVPN 日志。
-
-也可以在终端执行：
-
-```bash
-ml
-```
-
-使用交互菜单进行诊断和修复。
-
-如果是 `rp_filter` 问题，可将其调整为宽松模式：
+必要时执行：
 
 ```bash
 sysctl -w net.ipv4.conf.all.rp_filter=2
@@ -541,19 +496,7 @@ sysctl -w net.ipv4.conf.default.rp_filter=2
 
 ---
 
-### 6. 忘记后台登录密码
-
-在 VPS 终端执行：
-
-```bash
-ml password
-```
-
-系统会重新生成后台密码。
-
----
-
-## 🧱 Docker 使用说明
+## 🧱 Docker 说明
 
 Docker Compose 默认只将代理端口绑定到宿主机本地地址：
 
@@ -567,7 +510,7 @@ Docker Compose 默认只将代理端口绑定到宿主机本地地址：
 docker compose up -d
 ```
 
-如果容器需要运行 OpenVPN，通常需要：
+OpenVPN 容器通常需要：
 
 ```yaml
 cap_add:
@@ -576,91 +519,47 @@ devices:
   - /dev/net/tun:/dev/net/tun
 ```
 
-请确保宿主机已启用 TUN/TAP。
-
 ---
 
 ## 🔒 部署建议
 
-推荐部署方式：
-
-- Web 后台端口 8787 可以按需公网访问，但必须使用强密码和随机路径
-- 更安全的方式是后台也只通过 SSH 隧道访问
-- 代理端口 7928 默认只监听 127.0.0.1
-- 本地电脑通过 SSH 隧道访问代理
-- 不要公开分享 Clash 订阅链接
-- 不要使用弱密码
-- 不要将代理端口无保护暴露给公网
-- 定期更新节点
-- 定期查看日志
-
-更安全的后台访问方式：
-
-```bash
-ssh -L 8787:127.0.0.1:8787 root@your_vps_ip
-```
-
-然后在本地浏览器打开：
-
 ```text
-http://127.0.0.1:8787/随机安全后缀/
+仓库公开后，别人可以直接使用一键命令部署到自己的 VPS
+每台 VPS 会生成自己的后台密码、代理密码和订阅 token
+不要上传 vpngate_data、ui_auth.json、.env、日志、/etc/default/aimilivpn 等私密文件
+代理端口 7928 默认不要公网开放
+3X-ui 入站端口需要在云安全组放行
+后台端口 8787 建议使用强密码和随机路径
+订阅链接不要公开分享
 ```
 
 ---
 
-<a name="english"></a>
 ## English
 
-AimiliVPN is a private VPNGate-based proxy gateway written with the Python standard library. It provides a built-in responsive Web dashboard, smart node testing, automatic failover, fixed country routing, fixed IP routing, HTTP/SOCKS5 proxy gateway, real-time logs, gateway diagnostics, and Clash subscription export.
+ZhoudongVPN is a private VPNGate-based proxy gateway with a built-in Web dashboard, smart node testing, automatic failover, HTTP/SOCKS5 local proxy, 3X-ui helper, detailed node information, Clash subscription export, real-time logs, and gateway diagnostics.
 
-This hardened version is designed for safer private VPS deployment.
-
-### Key Features
-
-- Web dashboard with login authentication
-- Random management path
-- Brute-force protection for login API
-- PBKDF2 password hashing
-- Local-only proxy binding by default
-- HTTP/SOCKS5 proxy authentication
-- Client IP whitelist support
-- Dangerous OpenVPN directive filtering
-- Login-protected subscription info API
-- DNS auto-modification disabled by default
-- Smart VPNGate node testing and failover
-- Clash subscription export
-
-### Quick Install
+Quick install:
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/your-github-user/your-repo/main/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/c114/aimili-vpngate101/main/install.sh)
 ```
 
-After installation, the terminal will print the dashboard URL, username, and password.
-
-### Recommended Proxy Usage
-
-By default, the proxy listens on:
-
-```text
-127.0.0.1:7928
-```
-
-Use SSH tunneling from your local computer:
+Update an existing VPS:
 
 ```bash
-ssh -L 7928:127.0.0.1:7928 root@your_vps_ip
+ml update
 ```
 
-Then configure your local applications to use:
+Or manually:
 
-```text
-127.0.0.1:7928
+```bash
+cd /opt/aimilivpn
+git pull
+systemctl restart aimilivpn
 ```
 
-### Security Notice
-
-Do not expose the proxy port to the public Internet without a strong password, firewall rules, cloud security group restrictions, and trusted IP allowlisting.
+The proxy listens on `127.0.0.1:7928` by default and should not be publicly exposed. Use the dashboard's **Admin -> 3X-ui Helper** to copy Xray outbound JSON and routing examples.
 
 ---
 
