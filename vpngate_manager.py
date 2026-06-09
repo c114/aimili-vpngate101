@@ -807,6 +807,7 @@ def get_state() -> dict[str, Any]:
     state.pop("password", None)
     state["active_openvpn_node_id"] = active_openvpn_node_id
     state["is_connecting"] = is_connecting
+    state["openvpn_running"] = active_openvpn_running()
     state.setdefault("api_url", API_URL)
     state.setdefault("target_valid_nodes", TARGET_VALID_NODES)
     state.setdefault("fetch_interval_seconds", FETCH_INTERVAL_SECONDS)
@@ -3295,6 +3296,61 @@ INDEX_HTML = r"""<!doctype html>
       vertical-align: top;
     }
 
+    /* 节点信息较多时，列表区域独立滚动，避免必须拖到整页最底部才能看全。 */
+    .table-container {
+      max-height: min(72vh, 760px);
+      overflow: auto;
+      scrollbar-gutter: stable both-edges;
+    }
+    .table-container table {
+      min-width: 1320px;
+    }
+    .table-container thead th {
+      position: sticky;
+      top: 0;
+      z-index: 12;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    .table-container th:last-child, .table-container td:last-child {
+      position: sticky;
+      right: 0;
+      z-index: 8;
+      background: rgba(22, 30, 49, 0.96);
+      box-shadow: -10px 0 18px rgba(0, 0, 0, 0.18);
+    }
+    .table-container thead th:last-child {
+      z-index: 18;
+      background: rgba(17, 24, 39, 0.98);
+    }
+    .pagination-container {
+      display: flex !important;
+      position: sticky;
+      bottom: 0;
+      z-index: 20;
+      background: rgba(22, 30, 49, 0.96);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    .modal-content {
+      max-height: 88vh;
+      overflow-y: auto;
+    }
+    .empty-state-card {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-items: center;
+      justify-content: center;
+      padding: 38px 16px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+    .empty-state-card strong {
+      color: var(--text-primary);
+      font-size: 16px;
+    }
+
     @media (max-width: 768px) {
       header {
         flex-direction: column;
@@ -4002,8 +4058,9 @@ INDEX_HTML = r"""<!doctype html>
 </main>
 <script>
 let nodes=[], state={}, testingNodeIds = new Set();
+let lastLoadError = "";
 let currentPage = 1;
-const pageSize = 99999;
+const pageSize = 200;
 let currentPageNodes = [];
 
 const $=id=>document.getElementById(id);
@@ -4232,6 +4289,7 @@ function renderNodeDetailStats(list){
 function render(){
   const activeNodeId = state.active_openvpn_node_id;
   const activeNode = nodes.find(n => n && (n.active || n.id === activeNodeId));
+  const openvpnRunning = state.openvpn_running !== false;
   
   // Render separated Active Node Card
   const activeCardContainer = $("active_node_card");
@@ -4266,7 +4324,7 @@ function render(){
           </div>
           <div class="active-card-details">
             <div class="active-card-title">
-              <span class="badge available"><span class="badge-pulse"></span>已连接</span>
+              ${openvpnRunning ? '<span class="badge available"><span class="badge-pulse"></span>已连接</span>' : '<span class="badge unavailable">隧道断开</span>'}
               <strong>${countryFlag(activeNode.country_short)} ${esc(translateCountry(activeNode.country))} 节点</strong>
             </div>
             <div class="active-card-value mono" style="font-size: 20px; margin-top: 2px;">
@@ -4384,7 +4442,9 @@ function render(){
 
   // Render table rows
   if (currentPageNodes.length === 0) {
-    $("rows").innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--text-secondary); padding: 40px 0;">未找到符合过滤条件的备选节点。</td></tr>`;
+    const msg = lastLoadError || state.last_fetch_message || state.last_check_message || "暂无节点缓存。请点击右上角“更新节点”，或检查 VPS 是否可以访问 VPNGate API。";
+    const hint = state.is_connecting ? "后台正在连接或检测节点，请稍候自动刷新。" : "如果 OpenVPN 刚断开，后台会自动尝试切换；也可以手动点击更新节点。";
+    $("rows").innerHTML = `<tr><td colspan="10"><div class="empty-state-card"><strong>暂无可显示节点</strong><div>${esc(msg)}</div><div>${esc(hint)}</div><div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin-top:8px;"><button class="btn-primary" onclick="document.getElementById('refresh').click()">立即更新节点</button><button onclick="openXuiHelperModal && openXuiHelperModal()">打开 3X-ui 对接</button><button onclick="openLogsModal && openLogsModal()">查看日志</button></div></div></td></tr>`;
   } else {
     $("rows").innerHTML=currentPageNodes.map(n=>{
       if (!n) return '';
@@ -4565,8 +4625,9 @@ function startConnectionPolling() {
     try {
       const resp = await fetch("./api/nodes");
       const data = await resp.json();
-      nodes = Array.isArray(data.nodes) ? data.nodes : [];
-      state = data.state || {};
+      nodes = Array.isArray(data.nodes) ? data.nodes : nodes;
+      state = data.state || state || {};
+      lastLoadError = "";
       stableSortNodes();
       updateCountryFilter();
       render();
@@ -4580,6 +4641,7 @@ function startConnectionPolling() {
         load();
       }
     } catch(pe) {
+      lastLoadError = "连接状态轮询失败：" + (pe && pe.message ? pe.message : pe);
       clearInterval(pollInterval);
       pollInterval = null;
       load();
@@ -4647,11 +4709,19 @@ async function disconnectNode(){
 
 
 async function load(){
-  const r=await fetch("./api/nodes"); 
-  const d=await r.json(); 
-  nodes=Array.isArray(d.nodes) ? d.nodes : []; 
-  state=d.state||{}; 
-  
+  try {
+    const r=await fetch("./api/nodes", {cache: "no-store"});
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d=await r.json();
+    nodes=Array.isArray(d.nodes) ? d.nodes : nodes;
+    state=d.state||state||{};
+    lastLoadError = "";
+  } catch (e) {
+    lastLoadError = "面板数据加载失败：" + (e && e.message ? e.message : e);
+    state = state || {};
+    state.last_check_message = lastLoadError;
+  }
+
   stableSortNodes();
   updateCountryFilter();
   render();
@@ -5831,9 +5901,12 @@ class Handler(BaseHTTPRequestHandler):
         elif effective_path == "/api/nodes":
             global last_active_ping_time, last_active_latency, active_openvpn_node_id
             nodes = read_nodes()
+            vpn_running_now = active_openvpn_running()
             active_node = next((n for n in nodes if active_openvpn_node_id and n.get("id") == active_openvpn_node_id), None)
+            if active_openvpn_node_id and not vpn_running_now and not is_connecting:
+                set_state(proxy_ok=False, proxy_error="OpenVPN 进程已断开，后台正在等待自动切换或下次节点维护。", active_node_latency="隧道断开")
             for n in nodes:
-                n["active"] = (active_openvpn_node_id and n.get("id") == active_openvpn_node_id)
+                n["active"] = bool(vpn_running_now and active_openvpn_node_id and n.get("id") == active_openvpn_node_id)
             if active_node:
                 ip = active_node.get("ip") or active_node.get("remote_host")
                 if ip:

@@ -43,11 +43,11 @@ case "$OS_TYPE" in
 esac
 
 echo -e "${BLUE}==========================================================${PLAIN}"
-echo -e "${BLUE}        欢迎使用 PrivateGate 一键源码部署与管理脚本${PLAIN}"
+echo -e "${BLUE}        欢迎使用 ZhoudongVPN 一键源码部署与管理脚本${PLAIN}"
 echo -e "${BLUE}==========================================================${PLAIN}"
 
 # 3. Configure GitHub Repository URL
-# Default repository. You can override with: bash install.sh your_github_user your_repo
+# Default repository. You can override with: bash install.sh github_user repo_name
 DEFAULT_USER="c114"
 DEFAULT_REPO="aimili-vpngate101"
 
@@ -82,7 +82,7 @@ fi
 
 # 4. Clone or pull the repository
 INSTALL_DIR="/opt/aimilivpn"
-# 默认部署分支（在 bate 分支设为 bate；在 main 分支设为 main）
+# 默认部署分支
 DEFAULT_DEPLOY_BRANCH="main"
 
 # 自动检测本地已安装版本当前所在的分支
@@ -99,7 +99,13 @@ else
     if [ -d "${INSTALL_DIR}" ]; then
         echo -e "  -> 目录 ${INSTALL_DIR} 已存在，正在更新并强制覆盖本地源码..."
         cd "${INSTALL_DIR}"
-        git fetch --all || true
+        CURRENT_REMOTE=$(git remote get-url origin 2>/dev/null || echo "")
+        if [ "$CURRENT_REMOTE" != "$GITHUB_URL" ]; then
+            echo -e "  -> 检测到旧仓库来源: ${CURRENT_REMOTE:-无}，正在切换为 ${GITHUB_URL} ..."
+            git remote remove origin 2>/dev/null || true
+            git remote add origin "$GITHUB_URL"
+        fi
+        git fetch origin "${DEPLOY_BRANCH}" || git fetch --all || true
         git checkout "${DEPLOY_BRANCH}" || git checkout -b "${DEPLOY_BRANCH}" "origin/${DEPLOY_BRANCH}" || true
         echo -e "  -> 正在强制重置本地源码至 origin/${DEPLOY_BRANCH} ..."
         if git reset --hard "origin/${DEPLOY_BRANCH}"; then
@@ -156,7 +162,7 @@ if command -v systemctl >/dev/null 2>&1; then
     echo -e "  -> 检测到 systemd，正在创建服务配置 /lib/systemd/system/aimilivpn.service ..."
     cat > /lib/systemd/system/aimilivpn.service <<EOF
 [Unit]
-Description=PrivateGate OpenVPN Manager with HTTP/SOCKS5 Proxy
+Description=ZhoudongVPN OpenVPN Manager with HTTP/SOCKS5 Proxy
 After=network.target
 
 [Service]
@@ -177,7 +183,7 @@ elif command -v rc-service >/dev/null 2>&1; then
     cat > /etc/init.d/aimilivpn <<EOF
 #!/sbin/openrc-run
 
-description="PrivateGate OpenVPN Manager with HTTP/SOCKS5 Proxy"
+description="ZhoudongVPN OpenVPN Manager with HTTP/SOCKS5 Proxy"
 command="/usr/bin/python3"
 command_args="${INSTALL_DIR}/vpngate_manager.py"
 command_background="yes"
@@ -211,6 +217,7 @@ import shutil
 
 INSTALL_DIR = "/opt/aimilivpn"
 LOG_FILE = "/opt/aimilivpn/vpngate_data/vpngate.log"
+DEFAULT_GITHUB_URL = "https://github.com/c114/aimili-vpngate101.git"
 
 def generate_random_password():
     import random
@@ -437,7 +444,7 @@ def print_status():
         openvpn_status = f"{green}[已连接]{reset}" if openvpn_ok else f"{red}[未连接]{reset}"
     
     print_line("=======================================================")
-    print_line(f"               {bold}PrivateGate 管理终端 v2.0{reset}                  ")
+    print_line(f"               {bold}ZhoudongVPN 管理终端 v2.0{reset}                  ")
     print_line("=======================================================")
     print_line("【核心服务状态】")
     print_line(format_line(f"代理网关 (Port {proxy_port})", gateway_status))
@@ -517,25 +524,25 @@ def run_service_cmd(cmd):
         print("未检测到支持的服务管理器 (systemd/OpenRC)")
 
 def start_service():
-    print("正在启动 PrivateGate 服务...", flush=True)
+    print("正在启动 ZhoudongVPN 服务...", flush=True)
     run_service_cmd("start")
     print("已发送启动指令。")
     time.sleep(1)
 
 def stop_service():
-    print("正在停止 PrivateGate 服务...", flush=True)
+    print("正在停止 ZhoudongVPN 服务...", flush=True)
     run_service_cmd("stop")
     print("已发送停止指令。")
     time.sleep(1)
 
 def restart_service():
-    print("正在重启 PrivateGate 服务...", flush=True)
+    print("正在重启 ZhoudongVPN 服务...", flush=True)
     run_service_cmd("restart")
     print("已发送重启指令。")
     time.sleep(1)
 
 def show_logs():
-    print("正在查看 PrivateGate 日志 (按 Ctrl+C 退出)...", flush=True)
+    print("正在查看 ZhoudongVPN 日志 (按 Ctrl+C 退出)...", flush=True)
     if os.path.exists(LOG_FILE):
         try:
             subprocess.run(["tail", "-f", "-n", "50", LOG_FILE])
@@ -555,8 +562,15 @@ def update_service():
                 time.sleep(3)
                 return
             
+            # Always update from the project repository, not from an old upstream fork.
+            curr_remote = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True).stdout.strip()
+            if curr_remote != DEFAULT_GITHUB_URL:
+                print(f"检测到旧更新来源: {curr_remote or '无'}，正在切换为 {DEFAULT_GITHUB_URL}")
+                subprocess.run(["git", "remote", "remove", "origin"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["git", "remote", "add", "origin", DEFAULT_GITHUB_URL], check=True)
+
             # Fetch remote origin updates
-            subprocess.run(["git", "fetch", "--all"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["git", "fetch", "origin"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
             # Detect remote branch (prefer current local branch, fallback to origin/main or origin/master)
             curr = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True)
@@ -606,9 +620,9 @@ def update_service():
         time.sleep(2)
 
 def uninstall_service():
-    confirm = input("确定要完全卸载 PrivateGate 吗？(y/N): ")
+    confirm = input("确定要完全卸载 ZhoudongVPN 吗？(y/N): ")
     if confirm.lower() == 'y':
-        print("正在完全卸载 PrivateGate...", flush=True)
+        print("正在完全卸载 ZhoudongVPN...", flush=True)
         stop_service()
         if shutil.which("systemctl"):
             subprocess.run(["systemctl", "disable", "aimilivpn.service"])
@@ -627,7 +641,7 @@ def uninstall_service():
         except Exception:
             pass
         subprocess.run(["rm", "-rf", INSTALL_DIR])
-        print("PrivateGate 已卸载！")
+        print("ZhoudongVPN 已卸载！")
         sys.exit(0)
     else:
         print("已取消卸载。")
@@ -636,7 +650,7 @@ def uninstall_service():
 def ask_restart():
     ans = input("配置已保存。是否立即重启服务生效？(Y/n): ").strip().lower()
     if ans in ('', 'y', 'yes'):
-        print("正在重启 PrivateGate 服务...", flush=True)
+        print("正在重启 ZhoudongVPN 服务...", flush=True)
         restart_service()
         print("服务已重启。")
         time.sleep(1.5)
@@ -1143,7 +1157,7 @@ if [ -d "/proc/sys/net/ipv4/conf" ]; then
     done
 fi
 
-echo -e "\n正在启动 PrivateGate 服务并初始化网络..."
+echo -e "\n正在启动 ZhoudongVPN 服务并初始化网络..."
 if command -v systemctl >/dev/null 2>&1; then
     systemctl restart aimilivpn.service || true
 elif command -v rc-service >/dev/null 2>&1; then
@@ -1151,7 +1165,7 @@ elif command -v rc-service >/dev/null 2>&1; then
 fi
 
 # Wait and poll for node loading and active connection
-echo -e "\n正在等待 PrivateGate 首次获取节点并建立加密通道 (此过程可能需要 5-30 秒)..."
+echo -e "\n正在等待 ZhoudongVPN 首次获取节点并建立加密通道 (此过程可能需要 5-30 秒)..."
 ACTIVE_ID=""
 LAST_MSG=""
 for i in {1..90}; do
@@ -1209,7 +1223,7 @@ echo -e "正在获取 VPS 公网 IPv6..."
 PUBLIC_IPV6=$(curl -6 -s --max-time 3 https://api.ipify.org || curl -6 -s --max-time 3 https://ifconfig.me || curl -6 -s --max-time 3 icanhazip.com || echo "")
 
 echo -e "\n${GREEN}==========================================================${PLAIN}"
-echo -e "${GREEN}             PrivateGate 源码一键部署已完成！${PLAIN}"
+echo -e "${GREEN}             ZhoudongVPN 源码一键部署已完成！${PLAIN}"
 echo -e "${GREEN}==========================================================${PLAIN}"
 echo -e "  * 网页控制面板:  ${BLUE}http://${PUBLIC_IP}:${UI_PORT}/${SECRET_PATH}/${PLAIN}"
 echo -e "    ${YELLOW}提示: 后台已启用随机安全路径、账号密码与登录失败限速。生产环境建议仅放行你的固定公网 IP。${PLAIN}"

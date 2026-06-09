@@ -27,3 +27,11 @@ Validation run:
 python3 -m py_compile vpngate_manager.py proxy_server.py vpn_utils.py
 bash scripts/check.sh
 ```
+
+
+## Final repository/update and UI stability cleanup
+- Forced installer and `ml update` to use `https://github.com/c114/aimili-vpngate101.git`, preventing updates from old upstream repositories.
+- Renamed remaining legacy-facing service text to ZhoudongVPN where user-facing.
+- Made node table independently scrollable with sticky headers and sticky action column.
+- Added frontend load-failure fallback so the dashboard keeps the last node cache instead of going blank.
+- Added OpenVPN disconnected state reporting in `/api/nodes` and dashboard state.
